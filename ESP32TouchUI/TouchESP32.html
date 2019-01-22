@@ -1,0 +1,644 @@
+<!--This code is based on a project by Seb Lee-Delisle: http://seb.ly/2011/04/multi-touch-game-controller-in-javascripthtml5-for-ipad/-->
+<!doctype html>
+<html lang=en style="padding-bottom:80px">
+  <head>
+    <meta charset=utf-8>
+    <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" />
+    <meta name="mobile-web-app-capable" content="yes">
+    <title>ESP32 Touch Control</title>
+    <style type="text/css"> 
+* {
+  -webkit-touch-callout: none; /* prevent callout to copy image, etc when tap to hold */
+  -webkit-text-size-adjust: none; /* prevent webkit from resizing text to fit */
+  /* make transparent link selection, adjust last value opacity 0 to 1.0 */
+  -webkit-tap-highlight-color: rgba(0,0,0,0); 
+  -webkit-user-select: none; /* prevent copy paste, to allow, change 'none' to 'text' */
+  -webkit-tap-highlight-color: rgba(0,0,0,0); 
+}
+body {
+  background-color: #000000;
+  margin: 0px;
+}
+canvas {
+  display:block; 
+  position:absolute; 
+  z-index: 1;
+}
+.container {
+  width:auto;
+  text-align:center;
+  background-color:#ff0000;
+}
+
+.button{
+  cursor: pointer;
+  border-radius: 10%;
+  border: 2px;
+  border-style: solid;
+  border-color: white;
+  text-align:center;
+  margin: 8px;
+  padding: 2px;
+}
+
+.button light{
+  transition: background 0.4s;
+}
+
+input[type="checkbox"]:checked + label {
+    background: gray;
+}
+
+.sidenav {
+  overflow: hidden;
+  color: white;
+  //background-color: green;
+  position: fixed;
+  font-family: 'Roboto', sans-serif;
+  
+  width: 100%;
+  display: flex;
+  justify-content: space-between;  
+}
+canvas#stream{
+  //display: block;
+  margin: 0px;
+  //width: 100%;
+  height: auto;
+  //position:absolute;
+  //top:6vh;right:0;left:0;
+  margin:auto;
+  background:blue
+}
+    </style>
+    <link href="https://fonts.googleapis.com/css?family=Roboto" rel="stylesheet">
+  </head>
+  <!--
+    <ul id="messages"></ul>
+    
+    <center>
+    <canvas id="stream" width="160" height="120" style="z-index: -1;"></canvas>
+    </center>
+    -->
+  <body scroll="no" style="overflow: hidden; height:100vh;">
+    
+    <script>
+//----------------OV7670 stuff-------------------------
+
+var r = 0;
+var capturecount = 1;
+var ln = 0;
+var flag = 0;
+var xres = 160;
+var yres = 120;
+var canvas;
+var ctx;
+var imgData;
+var gcanvasid = "canvas-QQ-VGA";    
+var camera_ip = "192.168.4.1";
+
+//-----------------------------------------------------
+
+
+host = window.location.hostname;
+if(!host) host = '192.168.4.1'; //For debugging only 
+var ipaddr= host + ":81"; // websock port of ESP32, normally xx.xx.xx.xx:81
+var websock = new WebSocket('ws://' + ipaddr);
+websock.binaryType = 'arraybuffer';
+websock.onopen = function(evt) {
+  console.log('websock open');
+  websock.send(gcanvasid); // initiate stream
+  console.log("Sending: " + gcanvasid);
+};
+
+websock.onclose = function(evt) {
+  console.log('websock close');
+  toStatus('websock close');
+};
+
+websock.onerror = function(evt) { console.log(evt); toStatus(evt) };
+function toStatus(txt) {document.getElementById('status').innerHTML=txt; }
+function toReply(txt) {document.getElementById('reply').innerHTML=txt; }
+ 
+
+ 
+
+
+var Vector2 = function (x,y) {
+  this.x = x || 0;
+  this.y = y || 0;
+};
+
+Vector2.prototype = {
+
+  reset: function ( x, y ) {
+  
+    this.x = x;
+    this.y = y;
+    return this;
+  },
+  
+  copyFrom : function (v) {
+    this.x = v.x;
+    this.y = v.y;
+  },
+  
+  plusEq : function (v) {
+    this.x+=v.x;
+    this.y+=v.y;
+    return this;
+  },
+  
+  minusEq : function (v) {
+    this.x-=v.x;
+    this.y-=v.y;
+    return this; 
+  },
+  
+  equals : function (v) {
+    return((this.x==v.x)&&(this.y==v.x));
+  }
+
+};
+
+
+var canvas,
+  scanvas,
+  c, // c is the canvas' context 2D
+  container, 
+  halfWidth, 
+  halfHeight,
+  leftTouchID = -1, 
+  leftTouchPos = new Vector2(0,0),
+  leftTouchStartPos = new Vector2(0,0),
+  leftVector = new Vector2(0,0);
+
+var temperature;
+var sendFlag = false;
+
+setupCanvas();
+
+var mouseX, 
+  mouseY,
+  mouseDown = false,
+  touches = []; // array of touch vectors;
+  
+var headlight = 0;
+
+setInterval(draw, 1000/30); // draw app at 30fps
+
+setInterval(sendControls, 1000/20); // send control input at 20fps
+
+
+
+canvas.addEventListener( 'touchstart', onTouchStart, false );
+canvas.addEventListener( 'touchmove', onTouchMove, false );
+canvas.addEventListener( 'touchend', onTouchEnd, false );
+window.onorientationchange = resetCanvas;  
+window.onresize = resetCanvas;  
+
+
+canvas.addEventListener( 'mousemove', onMouseMove, false );
+canvas.addEventListener( 'mousedown', onMouseDown, false );
+canvas.addEventListener( 'mouseup', onMouseUp, false );
+
+
+function resetCanvas (e) {
+  // resize the canvas - but remember - this clears the canvas too. 
+  canvas.width = window.innerWidth; 
+  canvas.height = window.innerHeight;
+ 
+  //halfWidth = canvas.width/2; 
+  halfWidth = canvas.width;
+
+  halfHeight = canvas.height/2;
+ 
+  //make sure we scroll to the top left. 
+  window.scrollTo(0,0); 
+}
+
+var rawLeft, rawRight, MaxJoy = 255, MinJoy = -255, MaxValue = 255,
+  MinValue = -255, RawLeft, RawRight, ValLeft, ValRight;
+var leftMot = 0, rightMot = 0;
+
+function Remap(value, from1, to1, from2, to2){
+  return (value - from1) / (to1 - from1) * (to2 - from2) + from2;
+}
+
+//source: http://www.dyadica.co.uk/basic-differential-aka-tank-drive/
+function tankDrive(x, y){
+  
+  var z = Math.sqrt(x * x + y * y);
+  var rad = Math.acos(Math.abs(x) / z);
+  
+  if (isNaN(rad)) rad = 0;
+  var angle = rad * 180 / Math.PI;
+  var tcoeff = -1 + (angle / 90) * 2;
+  var turn = tcoeff * Math.abs(Math.abs(y) - Math.abs(x));
+  
+  turn = Math.round(turn * 100) / 100;
+  var move = Math.max(Math.abs(y), Math.abs(x));
+  
+  if ((x >= 0 && y >= 0) || (x < 0 && y < 0)){
+    rawLeft = move;
+    rawRight = turn;
+  }else{
+    rawRight = move;
+    rawLeft = turn;
+  }
+
+  if (y < 0){
+    rawLeft = 0 - rawLeft;
+    rawRight = 0 - rawRight;
+  }
+  
+  RawLeft = rawLeft;
+  RawRight = rawRight;
+  
+  leftMot = Remap(rawLeft, MinJoy, MaxJoy, MinValue, MaxValue);
+  rightMot = Remap(rawRight, MinJoy, MaxJoy, MinValue, MaxValue);
+}
+
+
+function draw() {
+  
+  c.clearRect(0,0,canvas.width, canvas.height); 
+
+  //if touch
+  for(var i=0; i<touches.length; i++) {
+    
+    var touch = touches[i]; 
+    
+    if(touch.identifier == leftTouchID){
+      c.beginPath(); 
+      c.strokeStyle = "white"; 
+      c.lineWidth = 6; 
+      c.arc(leftTouchStartPos.x, leftTouchStartPos.y, 40,0,Math.PI*2,true); 
+      c.stroke();
+      c.beginPath(); 
+      c.strokeStyle = "white"; 
+      c.lineWidth = 2; 
+      c.arc(leftTouchStartPos.x, leftTouchStartPos.y, 60,0,Math.PI*2,true); 
+      c.stroke();
+      c.beginPath(); 
+      c.strokeStyle = "white"; 
+      c.arc(leftTouchPos.x, leftTouchPos.y, 40, 0,Math.PI*2, true); 
+      c.stroke(); 
+      
+    } else {
+      
+      c.beginPath(); 
+      c.fillStyle = "white";
+      //c.fillText("touch id : "+touch.identifier+" x:"+touch.clientX+" y:"+touch.clientY, touch.clientX+30, touch.clientY-30); 
+  
+      c.beginPath(); 
+      c.strokeStyle = "red";
+      c.lineWidth = "6";
+      c.arc(touch.clientX, touch.clientY, 40, 0, Math.PI*2, true); 
+      c.stroke();
+    }
+  }
+
+  //if not touch   
+  if(mouseDown){
+  
+    c.beginPath(); 
+    c.strokeStyle = "white"; 
+    c.lineWidth = 6; 
+    c.arc(leftTouchStartPos.x, leftTouchStartPos.y, 40,0,Math.PI*2,true); 
+    c.stroke();
+    c.beginPath(); 
+    c.strokeStyle = "white"; 
+    c.lineWidth = 2; 
+    c.arc(leftTouchStartPos.x, leftTouchStartPos.y, 60,0,Math.PI*2,true); 
+    c.stroke();
+    c.beginPath(); 
+    c.strokeStyle = "white"; 
+    c.arc(leftTouchPos.x, leftTouchPos.y, 40, 0,Math.PI*2, true); 
+    c.stroke(); 
+        
+    c.fillStyle  = "white"; 
+    //c.fillText("mouse : "+mouseX+", "+mouseY, mouseX, mouseY); 
+    c.beginPath(); 
+    c.strokeStyle = "white";
+    c.lineWidth = "6";
+    c.arc(mouseX, mouseY, 40, 0, Math.PI*2, true); 
+    c.stroke();
+  }
+
+ 
+  //c.fillText("Left Motor: " + leftMot + " Right Motor: " + rightMot, 10, 30);
+  //c.fillText("Left Vx: " + leftVector.x + " Left Vy: " + leftVector.y, 10, 50);
+  //c.fillText("Temperature: "+temperature+"&#176C", 10, 30);
+ 
+ 
+  websock.onmessage=function(event) {
+  
+    console.log('Data received: ' + event.data);
+    //console.log(typeof event.data);
+    
+    if (typeof event.data === 'string'){
+      var msgReceived=JSON.parse(event.data);
+      console.log(msgReceived);
+      if(msgReceived.hasOwnProperty('temp')){
+        temperature = parseInt(msgReceived.temp);
+        document.getElementById("temp").innerHTML = temperature + '&#176C';
+      }
+      if(msgReceived.hasOwnProperty('volt')){
+        voltage = parseFloat(msgReceived.volt).toFixed(2);
+        document.getElementById("volt").innerHTML = voltage + 'V';
+      }
+    }
+    else{
+      var arraybuffer = event.data;
+      if (arraybuffer.byteLength == 1){
+        flag  = new Uint8Array(event.data); // Start Flag
+        if (flag == 0xAA) {
+          ln = 0;
+        }
+        if (flag == 0xFF) {
+          //alert("Last Block");
+        }        
+        if (flag == 0x11) {
+          //alert("Camera IP");
+        }
+        
+      } else{
+        
+        if (flag == 0x11) {
+          //alert("Camera IP " + event.data);
+          camera_ip = event.data;
+          //document.getElementById("wifi-ip").innerText = camera_ip;
+          flag = 0;
+        } else{
+          var bytearray = new Uint8Array(event.data);
+          display(bytearray, arraybuffer.byteLength, flag);
+        }
+      }
+    }
+    
+    
+  }
+  
+
+  
+  
+  
+  
+  
+}
+
+
+window.addEventListener('resize', resizeStream, false);
+
+ function resizeStream() {
+   aspectRatio = 160/120;
+   maxHeight = window.innerHeight - document.getElementById('navTop').offsetHeight - document.getElementById('navBottom').offsetHeight;
+   if(window.innerWidth*aspectRatio <= maxHeight){
+     document.getElementById('stream').style.height = window.innerWidth*aspectRatio + "px";
+     document.getElementById('stream').style.width = window.innerWidth + "px";
+   }
+   else {
+     document.getElementById('stream').style.height = maxHeight + "px";
+     document.getElementById('stream').style.width = maxHeight/aspectRatio + "px";
+   }
+ }
+
+
+
+
+
+
+function display(pixels, pixelcount, flag){
+
+  var i = 0;
+  var scanvas = document.getElementById('stream');
+  var ctx = scanvas.getContext('2d');
+  imgData = ctx.createImageData(120, 160);
+  
+  for(x=xres-1; x >= 0; x--){
+    for(y=0; y < yres; y++){
+	  
+      i = (y * xres + x) << 1;
+      pixel16 = (0xffff & pixels[i]) | ((0xffff & pixels[i+1]) << 8);
+      imgData.data[ln+0] = ((((pixel16 >> 11) & 0x1F) * 527) + 23) >> 6;
+      imgData.data[ln+1] = ((((pixel16 >> 5) & 0x3F) * 259) + 33) >> 6;
+      imgData.data[ln+2] = (((pixel16 & 0x1F) * 527) + 23) >> 6;  
+      imgData.data[ln+3] = (0xFFFFFFFF) & 255;
+      ln += 4;
+    }
+  }
+  
+  if (flag == 0xFF) { // last block
+    ln = 0;
+    
+	
+    ctx.putImageData(imgData,0,0);
+    websock.send("next-frame");
+    console.log("Sending: next-frame");
+  }
+    
+}
+
+/* 
+* Touch event
+*/  
+
+function onTouchStart(e) {
+  
+  for(var i = 0; i<e.changedTouches.length; i++){
+    var touch =e.changedTouches[i];
+    //console.log(leftTouchID + " "
+    if((leftTouchID<0) && (touch.clientX<halfWidth)){
+	
+      leftTouchID = touch.identifier;
+      leftTouchStartPos.reset(touch.clientX, touch.clientY);
+      leftTouchPos.copyFrom(leftTouchStartPos);
+      leftVector.reset(0,0);
+      continue;
+    } else{
+	
+      makeBullet();
+    }
+  }
+  touches = e.touches;
+}
+
+function onMouseDown(event) {
+  leftTouchStartPos.reset(event.offsetX, event.offsetY);
+  leftTouchPos.copyFrom(leftTouchStartPos);
+  leftVector.reset(0,0);
+  mouseDown = true;
+}
+ 
+function onTouchMove(e) {
+  // Prevent the browser from doing its default thing (scroll, zoom)
+  e.preventDefault();
+  
+  for(var i = 0; i<e.changedTouches.length; i++){
+    var touch =e.changedTouches[i];
+    if(leftTouchID == touch.identifier){
+      leftTouchPos.reset(touch.clientX, touch.clientY);
+      leftVector.copyFrom(leftTouchPos);
+      leftVector.minusEq(leftTouchStartPos);
+      sendFlag = true;
+      break;
+    }
+  }
+  
+  touches = e.touches;
+  
+}
+
+function onMouseMove(event){
+  
+  mouseX = event.offsetX;
+  mouseY = event.offsetY;
+  if(mouseDown){
+    leftTouchPos.reset(event.offsetX, event.offsetY);
+    leftVector.copyFrom(leftTouchPos);
+    leftVector.minusEq(leftTouchStartPos);
+    sendFlag = true;
+  }
+  
+}
+ 
+function onTouchEnd(e){
+  
+  touches = e.touches;
+  
+  for(var i = 0; i<e.changedTouches.length; i++){
+    var touch =e.changedTouches[i];
+    if(leftTouchID == touch.identifier){
+      leftTouchID = -1;
+      leftVector.reset(0,0);
+      leftMot = rightMot = 0;
+      sendFlag = true;
+      break;
+    }
+  }
+  
+}
+
+function onMouseUp(event) { 
+  
+  leftVector.reset(0,0);
+  leftMot = rightMot = 0;
+  mouseDown = false;
+  sendFlag = true;
+}
+
+/*
+Source for keyboard detection: Braden Best:
+https://stackoverflow.com/questions/5203407/how-to-detect-if-multiple-keys-are-pressed-at-once-using-javascript
+*/ 
+var map = {};
+onkeydown = onkeyup = function(e){
+  e = e || event; // to deal with IE
+  map[e.keyCode] = e.type == 'keydown';
+  
+  if(map[38]){ // ArrowUp
+    leftVector.y = -55;
+  }
+  if(map[40]){ // ArrowDown
+    leftVector.y = 55;
+  }
+  if(map[37]){ // ArrowLeft
+    leftVector.x = -55;
+  }
+  if(map[39]){ // ArrowRight
+    leftVector.x = 55;
+  }
+  
+  if(!map[38] && !map[40]){ // ArrowUp/Down is not pressed
+    leftVector.y = 0;
+  }
+  if(!map[37] && !map[39]){ // ArrowLeft/Right is not pressed
+    leftVector.x = 0;
+  }
+  if(leftVector.y == 0 && leftVector.x == 0) leftMot = rightMot = 0;
+  sendFlag = true;
+}
+
+function setupCanvas() {
+  
+  canvas = document.createElement( 'canvas' );
+  c = canvas.getContext( '2d' );
+  container = document.createElement( 'div' );
+  container.className = "container";
+  
+  document.body.appendChild( container );
+  container.appendChild(canvas);
+  
+  resetCanvas();
+  
+  c.strokeStyle = "#ffffff";
+  c.lineWidth =2;
+}
+
+function mouseOver(minX, minY, maxX, maxY){
+  return(mouseX>minX&&mouseY>minY&&mouseX<maxX&&mouseY<maxY);
+}
+
+function sendControls(){
+  if(sendFlag == true){
+    leftVector.x = Math.min(Math.max(parseInt(leftVector.x), -255), 255);
+    leftVector.y = Math.min(Math.max(parseInt(leftVector.y), -255), 255);
+    
+    tankDrive(leftVector.x, -leftVector.y);
+    if(leftMot > 0) leftMot += 70;
+    if(leftMot < 0) leftMot -= 70;
+    if(rightMot > 0) rightMot += 70;
+    if(rightMot < 0) rightMot -= 70;
+    leftMot = Math.min(Math.max(parseInt(leftMot), -255), 255);
+    rightMot = Math.min(Math.max(parseInt(rightMot), -255), 255);
+    
+    websock.send(JSON.stringify({ cmd : "pos", val : leftMot, val2 : rightMot }));
+    sendFlag = false;
+  }
+}
+
+
+
+function takePicture(){
+  websock.send(JSON.stringify({ cmd : "cam", val : 1 }));
+}
+
+function shutdown(){
+  if(confirm("This will shutdown the ESP32.\nAre you sure?")){
+    websock.send(JSON.stringify({ cmd : "power", val : 1 }));
+  }
+}
+// Handle headlight button
+function handleHeadlightClick(cb){
+  if (headlight == 0){
+    headlight = 1;
+	document.getElementById("light").style.backgroundColor = "gray";
+  } else{
+    headlight = 0;
+	document.getElementById("light").style.backgroundColor = "black";
+	
+  }
+  websock.send(JSON.stringify({ cmd : "light", val : headlight }));
+}
+
+
+    </script>
+    <div id="navTop" class="sidenav"style="position:relative;">
+      <a id="temp" style="padding-left: 3%;">0&#176C </a>
+      <a id="volt" style="padding-right: 3%;">0V</a>
+    </div>
+	
+	<div style="position:relative;z-index:0;">
+      <canvas id="stream" width="120" height="160"> </canvas>
+    </div>
+	
+    <div id="navBottom" class="sidenav" style="bottom:0;z-index: 2;">
+      <a id="off" class="button off" type="button" onclick="shutdown()" style="">OFF</a>
+      <a id="cam" class="button cam" type="button" onclick="takePicture()" style="">CAM</a>
+	  <a id="light" class="button light" type="button" onclick="handleHeadlightClick()" style="transition: background 0.4s;">LIGHT</a>
+	</div>
+    
+	<script>resizeStream();</script>
+  </body>
+</html>
