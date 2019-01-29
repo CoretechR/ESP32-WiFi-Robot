@@ -131,7 +131,8 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t payloa
         const int val = root["val"];
 
         if (strstr(cmd, "power")) {
-          Serial.println("power off command");
+          Serial.println("Going to sleep now");
+          esp_deep_sleep_start();
         }
         else if (strstr(cmd, "cam")) {
           Serial.println("camera command");
