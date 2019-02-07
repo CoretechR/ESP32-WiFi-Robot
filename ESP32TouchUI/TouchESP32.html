@@ -600,8 +600,11 @@ function sendControls(){
 
 
 
-function takePicture(){
-  websock.send(JSON.stringify({ cmd : "cam", val : 1 }));
+takePicture = function(el){
+  //websock.send(JSON.stringify({ cmd : "cam", val : 1 }));
+  var canvas = document.getElementById("stream");
+  var image = canvas.toDataURL("image/jpg");
+  el.href = image;
 }
 
 function shutdown(){
@@ -635,7 +638,7 @@ function handleHeadlightClick(cb){
 	
     <div id="navBottom" class="sidenav" style="bottom:0;z-index: 2;">
       <a id="off" class="button off" type="button" onclick="shutdown()" style="">OFF</a>
-      <a id="cam" class="button cam" type="button" onclick="takePicture()" style="">CAM</a>
+      <a id="cam" class="button cam" download="myImage.jpg" href="test" type="button" onclick="takePicture(this)" style="color:white; text-decoration:none;">CAM</a>
 	  <a id="light" class="button light" type="button" onclick="handleHeadlightClick()" style="transition: background 0.4s;">LIGHT</a>
 	</div>
     

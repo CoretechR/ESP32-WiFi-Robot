@@ -600,8 +600,11 @@ static const char canvas_htm[] PROGMEM = "<!--This code is based on a project by
 "\n"\
 "\n"\
 "\n"\
-"function takePicture(){\n"\
-"  websock.send(JSON.stringify({ cmd : \"cam\", val : 1 }));\n"\
+"takePicture = function(el){\n"\
+"  //websock.send(JSON.stringify({ cmd : \"cam\", val : 1 }));\n"\
+"  var canvas = document.getElementById(\"stream\");\n"\
+"  var image = canvas.toDataURL(\"image/jpg\");\n"\
+"  el.href = image;\n"\
 "}\n"\
 "\n"\
 "function shutdown(){\n"\
@@ -635,7 +638,7 @@ static const char canvas_htm[] PROGMEM = "<!--This code is based on a project by
 "	\n"\
 "    <div id=\"navBottom\" class=\"sidenav\" style=\"bottom:0;z-index: 2;\">\n"\
 "      <a id=\"off\" class=\"button off\" type=\"button\" onclick=\"shutdown()\" style=\"\">OFF</a>\n"\
-"      <a id=\"cam\" class=\"button cam\" type=\"button\" onclick=\"takePicture()\" style=\"\">CAM</a>\n"\
+"      <a id=\"cam\" class=\"button cam\" download=\"myImage.jpg\" href=\"test\" type=\"button\" onclick=\"takePicture(this)\" style=\"color:white; text-decoration:none;\">CAM</a>\n"\
 "	  <a id=\"light\" class=\"button light\" type=\"button\" onclick=\"handleHeadlightClick()\" style=\"transition: background 0.4s;\">LIGHT</a>\n"\
 "	</div>\n"\
 "    \n"\
